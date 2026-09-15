@@ -1,0 +1,141 @@
+name: Build DJL Tokenizers GLIBC 2.28
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    container:
+      image: rockylinux:8
+
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          dnf install -y \
+            git \
+            gcc \
+            gcc-c++ \
+            make \
+            cmake \
+            curl \
+            unzip \
+            zip \
+            openssl-devel \
+            pkgconf-pkg-config \
+            java-17-openjdk-devel \
+            findutils \
+            binutils
+
+          echo "===== GLIBC VERSION ====="
+          ldd --version | head -1
+
+          echo "===== GCC VERSION ====="
+          gcc --version | head -1
+
+          echo "===== JAVA VERSION ====="
+          java -version
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal
+
+          source "$HOME/.cargo/env"
+
+          rustc --version
+          cargo --version
+
+      - name: Clone DJL 0.35.0
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          git clone \
+            --branch v0.35.0 \
+            --depth 1 \
+            https://github.com/deepjavalibrary/djl.git \
+            /djl
+
+          cd /djl
+
+          git describe --tags
+
+      - name: Build tokenizer JNI
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          source "$HOME/.cargo/env"
+
+          cd /djl
+
+          chmod +x gradlew
+
+          ./gradlew :extensions:tokenizers:compileJNI
+
+      - name: Find and verify library
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          SO_FILE="$(find /djl/extensions/tokenizers \
+            -type f \
+            -name 'libtokenizers.so' \
+            | head -1)"
+
+          if [ -z "$SO_FILE" ]; then
+            echo "ERROR: libtokenizers.so not found"
+            exit 1
+          fi
+
+          echo "================================"
+          echo "FOUND:"
+          echo "$SO_FILE"
+          echo "================================"
+
+          echo "===== FILE ====="
+          file "$SO_FILE"
+
+          echo "===== LDD ====="
+          ldd "$SO_FILE" || true
+
+          echo "===== REQUIRED GLIBC ====="
+
+          strings "$SO_FILE" \
+            | grep -o 'GLIBC_[0-9.]*' \
+            | sort -Vu \
+            | tee /tmp/glibc-versions.txt
+
+          echo "===== HIGHEST GLIBC ====="
+
+          tail -1 /tmp/glibc-versions.txt
+
+          mkdir -p /output
+
+          cp "$SO_FILE" /output/libtokenizers.so
+
+          sha256sum /output/libtokenizers.so \
+            | tee /output/libtokenizers.so.sha256
+
+          ldd --version | head -1 \
+            > /output/build-glibc.txt
+
+          strings "$SO_FILE" \
+            | grep -o 'GLIBC_[0-9.]*' \
+            | sort -Vu \
+            > /output/required-glibc.txt
+
+      - name: Upload libtokenizers
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtokenizers-djl-0350-glibc228
+          path: /output/
+          retention-days: 7
