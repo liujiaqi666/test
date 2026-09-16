@@ -7,14 +7,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    # Rocky Linux 8 使用 GLIBC 2.28
+    # Rocky Linux 8 = GLIBC 2.28
     container:
       image: rockylinux:8
 
     steps:
 
       # ============================================================
-      # 1. 安装编译环境
+      # 1. 安装编译依赖
       # ============================================================
       - name: Install build dependencies
         shell: bash
@@ -41,22 +41,23 @@ jobs:
           echo "========================================"
           echo "GLIBC VERSION"
           echo "========================================"
-          ldd --version | head -1
+
+          ldd --version | sed -n '1p'
 
           echo "========================================"
           echo "GCC VERSION"
           echo "========================================"
-          gcc --version | head -1
+
+          gcc --version | sed -n '1p'
 
           echo "========================================"
-          echo "JAVA LOCATION"
+          echo "JAVA"
           echo "========================================"
 
           JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which javac)")")")"
 
           echo "JAVA_HOME=$JAVA_HOME"
 
-          # 给后续 GitHub Actions Step 使用
           echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
           echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
 
@@ -72,13 +73,18 @@ jobs:
         run: |
           set -euxo pipefail
 
-          curl --proto '=https' \
-               --tlsv1.2 \
-               -sSf \
-               https://sh.rustup.rs \
-               | sh -s -- -y --profile minimal
+          curl \
+            --proto '=https' \
+            --tlsv1.2 \
+            -sSf \
+            https://sh.rustup.rs \
+            | sh -s -- \
+            -y \
+            --profile minimal
 
           source "$HOME/.cargo/env"
+
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
           echo "========================================"
           echo "RUST VERSION"
@@ -87,12 +93,9 @@ jobs:
           rustc --version
           cargo --version
 
-          # 后续 Step 也可以直接找到 cargo
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
 
       # ============================================================
-      # 3. 下载 DJL 0.35.0 源码
+      # 3. 下载 DJL 0.35.0
       # ============================================================
       - name: Clone DJL 0.35.0
         shell: bash
@@ -115,7 +118,46 @@ jobs:
 
 
       # ============================================================
-      # 4. 编译 Tokenizers JNI
+      # 4. 显示最终编译环境
+      # ============================================================
+      - name: Check build environment
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          source "$HOME/.cargo/env"
+
+          echo "========================================"
+          echo "GLIBC"
+          echo "========================================"
+
+          ldd --version | sed -n '1p'
+
+          echo "========================================"
+          echo "JAVA"
+          echo "========================================"
+
+          echo "JAVA_HOME=$JAVA_HOME"
+
+          java -version
+          javac -version
+
+          echo "========================================"
+          echo "RUST"
+          echo "========================================"
+
+          rustc --version
+          cargo --version
+
+          echo "========================================"
+          echo "GCC"
+          echo "========================================"
+
+          gcc --version | sed -n '1p'
+
+
+      # ============================================================
+      # 5. 编译 DJL Tokenizers JNI
       # ============================================================
       - name: Build tokenizer JNI
         shell: bash
@@ -124,33 +166,23 @@ jobs:
 
           source "$HOME/.cargo/env"
 
-          echo "========================================"
-          echo "BUILD ENVIRONMENT"
-          echo "========================================"
-
-          echo "JAVA_HOME=$JAVA_HOME"
-
-          java -version
-          javac -version
-          rustc --version
-          cargo --version
-
-          echo "GLIBC:"
-          ldd --version | head -1
-
           cd /djl
 
           chmod +x gradlew
 
           echo "========================================"
-          echo "START BUILD"
+          echo "START BUILD TOKENIZER JNI"
           echo "========================================"
 
           ./gradlew :extensions:tokenizers:compileJNI
 
+          echo "========================================"
+          echo "BUILD FINISHED"
+          echo "========================================"
+
 
       # ============================================================
-      # 5. 找到生成的 libtokenizers.so
+      # 6. 查找生成的 libtokenizers.so
       # ============================================================
       - name: Find libtokenizers
         shell: bash
@@ -169,32 +201,48 @@ jobs:
           SO_FILE="$(find /djl \
             -type f \
             -name 'libtokenizers.so' \
-            | head -1)"
+            -print -quit)"
 
           if [ -z "$SO_FILE" ]; then
-            echo "ERROR: libtokenizers.so NOT FOUND"
+
+            echo "========================================"
+            echo "ERROR"
+            echo "libtokenizers.so NOT FOUND"
+            echo "========================================"
+
             exit 1
+
           fi
 
-          echo "FOUND:"
+          echo "========================================"
+          echo "FOUND"
+          echo "========================================"
+
           echo "$SO_FILE"
 
           echo "SO_FILE=$SO_FILE" >> "$GITHUB_ENV"
 
 
       # ============================================================
-      # 6. 检查 SO 文件
+      # 7. 查看 SO 基本信息
       # ============================================================
-      - name: Verify libtokenizers
+      - name: Inspect libtokenizers
         shell: bash
         run: |
           set -euxo pipefail
 
           echo "========================================"
-          echo "LIBRARY FILE"
+          echo "FILE"
           echo "========================================"
 
           file "$SO_FILE"
+
+          echo
+          echo "========================================"
+          echo "SIZE"
+          echo "========================================"
+
+          ls -lh "$SO_FILE"
 
           echo
           echo "========================================"
@@ -203,9 +251,17 @@ jobs:
 
           ldd "$SO_FILE" || true
 
-          echo
+
+      # ============================================================
+      # 8. 检查 GLIBC 依赖
+      # ============================================================
+      - name: Check required GLIBC
+        shell: bash
+        run: |
+          set -euxo pipefail
+
           echo "========================================"
-          echo "REQUIRED GLIBC VERSIONS"
+          echo "REQUIRED GLIBC"
           echo "========================================"
 
           strings "$SO_FILE" \
@@ -218,44 +274,50 @@ jobs:
           echo "HIGHEST REQUIRED GLIBC"
           echo "========================================"
 
-          tail -1 /tmp/glibc-versions.txt
-
-
-      # ============================================================
-      # 7. 自动验证不能依赖 GLIBC > 2.28
-      # ============================================================
-      - name: Check GLIBC compatibility
-        shell: bash
-        run: |
-          set -euxo pipefail
-
           HIGHEST="$(
-            strings "$SO_FILE" \
-              | grep -o 'GLIBC_[0-9.]*' \
-              | sed 's/GLIBC_//' \
+            sed 's/GLIBC_//' /tmp/glibc-versions.txt \
               | sort -Vu \
               | tail -1
           )"
 
-          echo "Highest required GLIBC = $HIGHEST"
+          echo "GLIBC_$HIGHEST"
 
-          # 只允许 <= 2.28
-          if printf '%s\n%s\n' "2.28" "$HIGHEST" \
-              | sort -V -C; then
+          echo "HIGHEST_GLIBC=$HIGHEST" >> "$GITHUB_ENV"
 
+
+      # ============================================================
+      # 9. 强制验证 <= GLIBC 2.28
+      # ============================================================
+      - name: Verify GLIBC 2.28 compatibility
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "Target server GLIBC = 2.28"
+          echo "Library requires     = $HIGHEST_GLIBC"
+
+          if [ "$(printf '%s\n' "$HIGHEST_GLIBC" "2.28" | sort -V | tail -1)" = "2.28" ]; then
+
+            echo
             echo "========================================"
             echo "SUCCESS"
-            echo "libtokenizers.so is compatible"
-            echo "Required GLIBC <= 2.28"
             echo "========================================"
+            echo "libtokenizers.so requires:"
+            echo "GLIBC_$HIGHEST_GLIBC"
+            echo
+            echo "Compatible with GLIBC 2.28"
 
           else
 
+            echo
             echo "========================================"
-            echo "ERROR"
-            echo "libtokenizers.so requires GLIBC $HIGHEST"
-            echo "Target server only has GLIBC 2.28"
+            echo "FAILED"
             echo "========================================"
+            echo "libtokenizers.so requires:"
+            echo "GLIBC_$HIGHEST_GLIBC"
+            echo
+            echo "Target server only has:"
+            echo "GLIBC_2.28"
 
             exit 1
 
@@ -263,7 +325,7 @@ jobs:
 
 
       # ============================================================
-      # 8. 准备输出文件
+      # 10. 准备 Artifact
       # ============================================================
       - name: Prepare artifact
         shell: bash
@@ -273,42 +335,61 @@ jobs:
           mkdir -p /output
 
           cp "$SO_FILE" \
-             /output/libtokenizers.so
+            /output/libtokenizers.so
 
           sha256sum \
-             /output/libtokenizers.so \
-             > /output/libtokenizers.so.sha256
+            /output/libtokenizers.so \
+            > /output/libtokenizers.so.sha256
 
           ldd --version \
-             | head -1 \
-             > /output/build-glibc.txt
+            | sed -n '1p' \
+            > /output/build-glibc.txt
 
           strings "$SO_FILE" \
-             | grep -o 'GLIBC_[0-9.]*' \
-             | sort -Vu \
-             > /output/required-glibc.txt
+            | grep -o 'GLIBC_[0-9.]*' \
+            | sort -Vu \
+            > /output/required-glibc.txt
 
-          echo "========================================"
-          echo "OUTPUT"
-          echo "========================================"
+          echo "DJL Java version: 0.35.0" \
+            > /output/build-info.txt
 
-          ls -lh /output/
+          echo "Target GLIBC: <= 2.28" \
+            >> /output/build-info.txt
+
+          echo "Architecture: x86_64" \
+            >> /output/build-info.txt
 
           echo
-          echo "SHA256:"
+          echo "========================================"
+          echo "OUTPUT FILES"
+          echo "========================================"
+
+          ls -lh /output
+
+          echo
+          echo "========================================"
+          echo "SHA256"
+          echo "========================================"
+
           cat /output/libtokenizers.so.sha256
 
           echo
-          echo "BUILD GLIBC:"
+          echo "========================================"
+          echo "BUILD GLIBC"
+          echo "========================================"
+
           cat /output/build-glibc.txt
 
           echo
-          echo "REQUIRED GLIBC:"
+          echo "========================================"
+          echo "REQUIRED GLIBC"
+          echo "========================================"
+
           cat /output/required-glibc.txt
 
 
       # ============================================================
-      # 9. 上传 Artifact
+      # 11. 上传 Artifact
       # ============================================================
       - name: Upload libtokenizers
         uses: actions/upload-artifact@v4
@@ -316,3 +397,4 @@ jobs:
           name: libtokenizers-djl-0350-glibc228
           path: /output/
           retention-days: 7
+          if-no-files-found: error
