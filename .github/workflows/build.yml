@@ -7,14 +7,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    # Rocky Linux 8 的 glibc 基线为 2.28
+    # Rocky Linux 8 = GLIBC 2.28
     container:
       image: rockylinux:8
 
     steps:
 
       # ============================================================
-      # 1. 安装完整编译环境
+      # 1. 安装编译依赖
       # ============================================================
       - name: Install build dependencies
         shell: bash
@@ -40,11 +40,7 @@ jobs:
             file \
             which \
             perl \
-            perl-core \
-            perl-FindBin \
-            perl-IPC-Cmd \
-            perl-File-Compare \
-            perl-File-Copy
+            perl-core
 
           echo "========================================"
           echo "GLIBC VERSION"
@@ -111,7 +107,7 @@ jobs:
 
 
       # ============================================================
-      # 3. 下载 DJL 0.35.0 源码
+      # 3. 下载 DJL 0.35.0
       # ============================================================
       - name: Clone DJL 0.35.0
         shell: bash
@@ -205,7 +201,7 @@ jobs:
 
 
       # ============================================================
-      # 6. 找到生成的 libtokenizers.so
+      # 6. 查找 libtokenizers.so
       # ============================================================
       - name: Find libtokenizers
         shell: bash
@@ -227,7 +223,10 @@ jobs:
             -print -quit)"
 
           if [ -z "$SO_FILE" ]; then
-            echo "ERROR: libtokenizers.so NOT FOUND"
+            echo "========================================"
+            echo "ERROR"
+            echo "libtokenizers.so NOT FOUND"
+            echo "========================================"
             exit 1
           fi
 
@@ -267,7 +266,7 @@ jobs:
 
 
       # ============================================================
-      # 8. 获取 libtokenizers.so 要求的 GLIBC 版本
+      # 8. 检查 libtokenizers.so 所需 GLIBC
       # ============================================================
       - name: Check required GLIBC
         shell: bash
@@ -290,7 +289,7 @@ jobs:
           )"
 
           if [ -z "$HIGHEST" ]; then
-            echo "ERROR: Cannot determine required GLIBC version"
+            echo "ERROR: Cannot determine GLIBC requirement"
             exit 1
           fi
 
@@ -305,7 +304,7 @@ jobs:
 
 
       # ============================================================
-      # 9. 验证 GLIBC <= 2.28
+      # 9. 验证最高 GLIBC <= 2.28
       # ============================================================
       - name: Verify GLIBC 2.28 compatibility
         shell: bash
@@ -313,11 +312,11 @@ jobs:
           set -euxo pipefail
 
           echo "========================================"
-          echo "GLIBC COMPATIBILITY CHECK"
+          echo "GLIBC COMPATIBILITY"
           echo "========================================"
 
-          echo "Target server : GLIBC 2.28"
-          echo "Library       : GLIBC $HIGHEST_GLIBC"
+          echo "Server GLIBC  : 2.28"
+          echo "Library GLIBC : $HIGHEST_GLIBC"
 
           HIGHEST_VERSION="$(
             printf '%s\n' \
@@ -333,10 +332,9 @@ jobs:
             echo "========================================"
             echo "SUCCESS"
             echo "========================================"
-            echo "libtokenizers.so requires:"
-            echo "GLIBC_$HIGHEST_GLIBC"
-            echo
-            echo "Compatible with GLIBC 2.28"
+
+            echo "libtokenizers.so requires GLIBC_$HIGHEST_GLIBC"
+            echo "Compatible with server GLIBC 2.28"
 
           else
 
@@ -344,11 +342,9 @@ jobs:
             echo "========================================"
             echo "FAILED"
             echo "========================================"
-            echo "libtokenizers.so requires:"
-            echo "GLIBC_$HIGHEST_GLIBC"
-            echo
-            echo "Target server only has:"
-            echo "GLIBC_2.28"
+
+            echo "libtokenizers.so requires GLIBC_$HIGHEST_GLIBC"
+            echo "Server only has GLIBC_2.28"
 
             exit 1
 
@@ -356,7 +352,7 @@ jobs:
 
 
       # ============================================================
-      # 10. 准备下载文件
+      # 10. 准备 Artifact
       # ============================================================
       - name: Prepare artifact
         shell: bash
@@ -383,9 +379,9 @@ jobs:
 
           {
             echo "DJL Java version: 0.35.0"
-            echo "Target GLIBC: <= 2.28"
-            echo "Architecture: x86_64"
             echo "Build OS: Rocky Linux 8"
+            echo "Architecture: x86_64"
+            echo "Target GLIBC: <= 2.28"
             echo "Highest required GLIBC: GLIBC_$HIGHEST_GLIBC"
           } > /output/build-info.txt
 
@@ -393,24 +389,28 @@ jobs:
           echo "========================================"
           echo "OUTPUT FILES"
           echo "========================================"
+
           ls -lh /output
+
+          echo
+          echo "========================================"
+          echo "BUILD INFO"
+          echo "========================================"
+
+          cat /output/build-info.txt
 
           echo
           echo "========================================"
           echo "SHA256"
           echo "========================================"
-          cat /output/libtokenizers.so.sha256
 
-          echo
-          echo "========================================"
-          echo "BUILD GLIBC"
-          echo "========================================"
-          cat /output/build-glibc.txt
+          cat /output/libtokenizers.so.sha256
 
           echo
           echo "========================================"
           echo "REQUIRED GLIBC"
           echo "========================================"
+
           cat /output/required-glibc.txt
 
 
